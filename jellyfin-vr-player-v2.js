@@ -119,13 +119,13 @@
         document.head.appendChild(script);
       }
       script.addEventListener('load', resolve, { once: true });
-      script.addEventListener('error', () => reject(new Error('Three.js 加载失败')), { once: true });
+      script.addEventListener('error', () => reject(new Error('Échec du chargement de Three.js')), { once: true });
     });
   }
 
   async function ensureThree() {
     if (!window.THREE?.WebGLRenderer) await loadScript(THREE_URL);
-    if (!window.THREE?.WebGLRenderer) throw new Error('Three.js 初始化失败');
+    if (!window.THREE?.WebGLRenderer) throw new Error('Échec de l’initialisation de Three.js');
   }
 
   function findVideo() {
@@ -237,22 +237,22 @@
     bar.append(version);
     fpsLabel = document.createElement('span');
     fpsLabel.className = 'jvr-label';
-    fpsLabel.textContent = '渲染 -- FPS · 视频更新 -- FPS';
+    fpsLabel.textContent = 'Rendu -- FPS · Mise à jour vidéo -- FPS';
     bar.append(fpsLabel);
-    [['360°', '360'], ['180° 经编', '180'], ['180° 鱼眼', 'fisheye'], ['影院', 'flat']]
+    [['360°', '360'], ['180° équirect.', '180'], ['180° fisheye', 'fisheye'], ['Cinéma', 'flat']]
         .forEach(([label, value]) => bar.append(createButton(label, 'projection', value)));
-    [['单眼', 'mono'], ['SBS', 'sbs'], ['OU', 'ou']]
+    [['Mono', 'mono'], ['SBS', 'sbs'], ['OU', 'ou']]
         .forEach(([label, value]) => bar.append(createButton(label, 'stereo', value)));
-    bar.append(createButton('交换眼睛', 'swap'));
-    const source = createButton('原始源', 'source');
+    bar.append(createButton('Échanger les yeux', 'swap'));
+    const source = createButton('Source d’origine', 'source');
     source.id = 'jvr-source-toggle';
     bar.append(source);
-    const enter = createButton('进入 VR', 'enter');
+    const enter = createButton('Entrer en VR', 'enter');
     enter.className = 'jvr-enter';
     bar.append(enter);
     statusEl = document.createElement('div');
     statusEl.className = 'jvr-status';
-    statusEl.textContent = '正在初始化原生 WebXR 渲染器…';
+    statusEl.textContent = 'Initialisation du moteur de rendu WebXR natif…';
     overlay.append(bar, statusEl);
     document.body.appendChild(overlay);
     bar.addEventListener('click', handleToolbar);
@@ -334,10 +334,10 @@
     context.lineWidth = hovered ? 5 : 2;
     context.stroke();
     context.fillStyle = '#fff';
-    context.font = '44px system-ui, sans-serif';
     context.textAlign = 'center';
     context.textBaseline = 'middle';
-    context.fillText(label, x + width / 2, y + height / 2);
+    // Auto-shrink so longer (translated) labels never overflow the button.
+    fillFittedText(context, label, x + width / 2, y + height / 2, width - 36, 44, 26);
     panelButtons.push({ x, y, width, height, action });
   }
 
@@ -372,7 +372,7 @@
     context.fillStyle = '#5edcff';
     context.font = '28px system-ui, sans-serif';
     context.textAlign = 'right';
-    context.fillText('按住边框拖动面板', 1530, 52);
+    context.fillText('Maintenez le bord pour déplacer le panneau', 1530, 52);
     context.fillStyle = '#fff';
     context.textAlign = 'center';
     context.textBaseline = 'middle';
@@ -398,19 +398,19 @@
     context.lineWidth = 5;
     context.stroke();
     addPanelButton(55, 275, 170, 105, '-10', 'back');
-    addPanelButton(245, 275, 220, 105, activeVideo?.paused ? 'PLAY' : 'PAUSE', 'play', '#006f96');
+    addPanelButton(245, 275, 220, 105, activeVideo?.paused ? 'LIRE' : 'PAUSE', 'play', '#006f96');
     addPanelButton(485, 275, 170, 105, '+10', 'forward');
-    addPanelButton(675, 275, 210, 105, activeVideo?.muted ? 'MUTED' : 'SOUND', 'mute');
+    addPanelButton(675, 275, 210, 105, activeVideo?.muted ? 'MUET' : 'SON', 'mute');
     addPanelButton(905, 275, 210, 105, currentMode.projection.toUpperCase(), 'projection');
     addPanelButton(1135, 275, 180, 105, currentMode.stereo.toUpperCase(), 'stereo');
     addPanelButton(1335, 275, 210, 105, sourceMode === 'compat' ? 'H264' : 'SOURCE', 'source', '#25536a');
-    addPanelButton(55, 435, 330, 105, 'SWAP EYES', 'swap');
-    addPanelButton(425, 435, 330, 105, 'RESET ALL', 'reset', '#365061');
-    addPanelButton(795, 435, 330, 105, 'HIDE PANEL', 'hide');
-    addPanelButton(1165, 435, 380, 105, 'EXIT VR', 'exit-vr', '#652d34');
+    addPanelButton(55, 435, 330, 105, 'ÉCHANGER YEUX', 'swap');
+    addPanelButton(425, 435, 330, 105, 'RÉINITIALISER', 'reset', '#365061');
+    addPanelButton(795, 435, 330, 105, 'MASQUER', 'hide');
+    addPanelButton(1165, 435, 380, 105, 'QUITTER VR', 'exit-vr', '#652d34');
     context.fillStyle = '#81909f';
     context.font = '36px system-ui, sans-serif';
-    context.fillText('时间轴：按住拖动  ·  长按扳机拖动画面  ·  长按握柄：全部复位', 800, 635);
+    fillFittedText(context, 'Barre de temps : glisser · Gâchette maintenue : déplacer la vue · Grip maintenu : tout réinitialiser', 800, 635, 1500, 36, 24);
     panelTexture.needsUpdate = true;
   }
 
@@ -440,7 +440,7 @@
     };
     const context = canvas.getContext('webgl2', contextOptions)
         || canvas.getContext('webgl', contextOptions);
-    if (!context) throw new Error('无法创建 WebXR 兼容的 WebGL 上下文。');
+    if (!context) throw new Error('Impossible de créer un contexte WebGL compatible WebXR.');
     renderer = new THREE.WebGLRenderer({ canvas, context, ...contextOptions });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
@@ -491,7 +491,7 @@
     if (!quality || !Number.isFinite(quality.totalVideoFrames)
         || !Number.isFinite(quality.droppedVideoFrames)) {
       playbackQualityBaseline = null;
-      return '视频统计 -- · 浏览器未提供帧计数';
+      return 'Stats vidéo -- · compteur d’images non fourni par le navigateur';
     }
     const total = quality.totalVideoFrames;
     const dropped = quality.droppedVideoFrames;
@@ -499,15 +499,15 @@
     playbackQualityBaseline = { video, time, total, dropped };
     if (!previous || previous.video !== video || time <= previous.time
         || total < previous.total || dropped < previous.dropped) {
-      return `视频统计采样中 · 累计丢帧 ${dropped}`;
+      return `Stats vidéo : échantillonnage · images perdues (cumul) ${dropped}`;
     }
     const frameDelta = total - previous.total;
     const dropDelta = dropped - previous.dropped;
-    if (dropDelta > frameDelta) return `视频统计重新采样 · 累计丢帧 ${dropped}`;
+    if (dropDelta > frameDelta) return `Stats vidéo : nouvel échantillonnage · images perdues (cumul) ${dropped}`;
     const elapsed = time - previous.time;
     const effectiveFps = (frameDelta - dropDelta) * 1000 / elapsed;
     const dropRate = frameDelta ? dropDelta * 100 / frameDelta : 0;
-    return `视频有效 ${effectiveFps.toFixed(1)} FPS · 本段丢 ${dropDelta}/${frameDelta} (${dropRate.toFixed(1)}%) · 累计丢 ${dropped}`;
+    return `Vidéo effective ${effectiveFps.toFixed(1)} FPS · perdues sur la période ${dropDelta}/${frameDelta} (${dropRate.toFixed(1)} %) · cumul ${dropped}`;
   }
 
   function createFpsDisplay() {
@@ -528,7 +528,7 @@
     fpsMesh.renderOrder = 10004;
     camera.add(fpsMesh);
     resetFps();
-    drawFps('渲染 -- FPS · 视频回调 -- FPS\n视频统计采样中');
+    drawFps('Rendu -- FPS · Rappels vidéo -- FPS\nStats vidéo : échantillonnage');
   }
 
   function drawFps(text) {
@@ -559,7 +559,7 @@
     const playbackQualityText = samplePlaybackQuality(time);
     // Count submitted render frames and actual canvas video-frame copies.
     // This is not the compositor's display rate or the file's nominal FPS.
-    drawFps(`渲染 ${(fpsFrames * 1000 / elapsed).toFixed(1)} FPS · 视频回调 ${(fpsPresentedFrames * 1000 / elapsed).toFixed(1)} FPS${mediaLayer ? '' : ` · 复制 ${(fpsVideoFrames * 1000 / elapsed).toFixed(1)} FPS`}\n${playbackQualityText}\n复制 ${costLabel('copy')} · 上传 ${costLabel('upload')} ms 均/峰\n渲染提交 ${costLabel('render')} ms 均/峰 · 解码延迟 ${decodeCount ? (decodeTotal / decodeCount).toFixed(1) : '--'} ms\n${mediaLayerNote} · 源 ${textureVideo?.videoWidth || '?'}×${textureVideo?.videoHeight || '?'}${mediaLayer ? '' : ` → 纹理 ${videoFrameCanvas?.width || '?'}×${videoFrameCanvas?.height || '?'}`}`);
+    drawFps(`Rendu ${(fpsFrames * 1000 / elapsed).toFixed(1)} FPS · Rappels vidéo ${(fpsPresentedFrames * 1000 / elapsed).toFixed(1)} FPS${mediaLayer ? '' : ` · Copie ${(fpsVideoFrames * 1000 / elapsed).toFixed(1)} FPS`}\n${playbackQualityText}\nCopie ${costLabel('copy')} · Envoi GPU ${costLabel('upload')} ms moy/max\nRendu ${costLabel('render')} ms moy/max · Latence décodage ${decodeCount ? (decodeTotal / decodeCount).toFixed(1) : '--'} ms\n${mediaLayerNote} · Source ${textureVideo?.videoWidth || '?'}×${textureVideo?.videoHeight || '?'}${mediaLayer ? '' : ` → Texture ${videoFrameCanvas?.width || '?'}×${videoFrameCanvas?.height || '?'}`}`);
     fpsStart = time;
     fpsFrames = 0;
     fpsVideoFrames = 0;
@@ -687,7 +687,7 @@
       };
       const ready = () => {
         cleanup();
-        if (!video.isConnected) return reject(new Error('原视频已离开页面'));
+        if (!video.isConnected) return reject(new Error('La vidéo d’origine n’est plus dans la page'));
         try {
           video.currentTime = Number.isFinite(video.duration)
               ? Math.min(position, Math.max(0, video.duration - 0.01)) : position;
@@ -697,7 +697,7 @@
       };
       const failed = () => {
         cleanup();
-        reject(new Error('原视频 CORS 加载失败，请检查 8765 服务的视频响应是否包含跨域授权头'));
+        reject(new Error('Échec du chargement CORS de la vidéo d’origine : vérifiez que les réponses du serveur vidéo incluent les en-têtes d’autorisation cross-origin.'));
       };
       const timer = setTimeout(failed, 20000);
       video.addEventListener('loadedmetadata', ready);
@@ -720,8 +720,8 @@
       context.getImageData(0, 0, 1, 1);
     } catch (error) {
       statusEl.textContent = error.name === 'SecurityError'
-          ? '原视频画面读取仍被 CORS 拒绝，请检查视频服务器响应头。'
-          : `原视频画面尚不可用：${error.message || error}`;
+          ? 'La lecture de l’image de la vidéo d’origine est toujours refusée par CORS : vérifiez les en-têtes de réponse du serveur vidéo.'
+          : `Image de la vidéo d’origine pas encore disponible : ${error.message || error}`;
       return false;
     }
     if (mediaLayer) clearMediaLayer();
@@ -793,7 +793,7 @@
       videoFrameDirty = false;
     } catch (error) {
       videoFrameFailed = true;
-      if (statusEl) statusEl.textContent = `视频帧复制失败：${error.message || error}`;
+      if (statusEl) statusEl.textContent = `Échec de la copie de l’image vidéo : ${error.message || error}`;
       console.error('[Jellyfin VR] Canvas video frame failed', error);
     }
   }
@@ -820,9 +820,9 @@
       mediaLayerKey = key;
       mediaLayerVideo = textureVideo;
       if (!['180', '360'].includes(currentMode.projection)) {
-        mediaLayerNote = 'Canvas（当前投影）';
+        mediaLayerNote = 'Canvas (projection actuelle)';
       } else if (typeof window.XRMediaBinding !== 'function' || !renderer.xr.getBinding?.()) {
-        mediaLayerNote = 'Canvas（Media Layers 不可用）';
+        mediaLayerNote = 'Canvas (Media Layers indisponible)';
       } else {
         let candidate = null;
         try {
@@ -849,11 +849,11 @@
           resetFps();
         } catch (error) {
           candidate?.destroy?.();
-          mediaLayerNote = 'Canvas（Media Layers 创建失败）';
+          mediaLayerNote = 'Canvas (échec de création Media Layers)';
           console.warn('[Jellyfin VR] Media Layers fallback', error);
         }
       }
-      if (statusEl) statusEl.textContent = `VR 显示路径：${mediaLayerNote}`;
+      if (statusEl) statusEl.textContent = `Chemin d’affichage VR : ${mediaLayerNote}`;
     }
     if (mediaLayer) {
       const q = videoRoot.quaternion;
@@ -909,13 +909,19 @@
     }
   }
 
+  // Reused across frames: this runs once per controller per frame while the
+  // panel is visible, so allocating here would feed the garbage collector.
+  let panelRaycaster = null;
+  let panelRayRotation = null;
+
   function raycastPanel(controller) {
     if (!panelVisible || !panelMesh?.visible) return null;
-    const rotation = new THREE.Matrix4().extractRotation(controller.matrixWorld);
-    const raycaster = new THREE.Raycaster();
-    raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
-    raycaster.ray.direction.set(0, 0, -1).applyMatrix4(rotation);
-    return raycaster.intersectObject(panelMesh, false)[0] || null;
+    panelRaycaster = panelRaycaster || new THREE.Raycaster();
+    panelRayRotation = panelRayRotation || new THREE.Matrix4();
+    panelRayRotation.extractRotation(controller.matrixWorld);
+    panelRaycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
+    panelRaycaster.ray.direction.set(0, 0, -1).applyMatrix4(panelRayRotation);
+    return panelRaycaster.intersectObject(panelMesh, false)[0] || null;
   }
 
   function panelActionFromIntersection(intersection) {
@@ -1132,7 +1138,7 @@
       panelMesh.scale.set(1, 1, 1);
     }
     showPanel();
-    if (statusEl) statusEl.textContent = '控制面板和视频视角已复位。';
+    if (statusEl) statusEl.textContent = 'Panneau de contrôle et vue vidéo réinitialisés.';
     drawPanel();
   }
 
@@ -1142,7 +1148,7 @@
     pollGamepads();
     updateTriggerDrag();
     updateControllerHover();
-    if (time - lastPanelDraw > 250) {
+    if (panelVisible && time - lastPanelDraw > 250) {
       lastPanelDraw = time;
       drawPanel();
     }
@@ -1165,12 +1171,17 @@
     recordCost('render', performance.now() - renderStart);
   }
 
+  // Repainting the 1600x720 panel canvas is wasted work while it is hidden.
+  function refreshPanel() {
+    if (panelVisible) drawPanel();
+  }
+
   function bindMediaEvents(video, enabled) {
     if (!video) return;
     const method = enabled ? 'addEventListener' : 'removeEventListener';
-    video[method]('timeupdate', drawPanel);
+    video[method]('timeupdate', refreshPanel);
     video[method]('play', handleMediaReady);
-    video[method]('pause', drawPanel);
+    video[method]('pause', refreshPanel);
     video[method]('loadedmetadata', handleMediaReady);
     video[method]('canplay', handleMediaReady);
     video[method]('error', handleMediaError);
@@ -1179,19 +1190,19 @@
   function handleMediaReady() {
     if (this !== activeVideo) return;
     if (!replaceVideoTexture(activeVideo)) return;
-    const label = sourceMode === 'compat' ? 'H.264/8-bit 兼容源' : '原始源';
-    statusEl.textContent = `${label}已连接 · ${activeVideo.videoWidth || '?'}×${activeVideo.videoHeight || '?'} · 可进入 VR`;
+    const label = sourceMode === 'compat' ? 'Source compatible H.264/8 bits' : 'Source d’origine';
+    statusEl.textContent = `${label} connectée · ${activeVideo.videoWidth || '?'}×${activeVideo.videoHeight || '?'} · prête pour la VR`;
     drawPanel();
   }
 
   function handleMediaError() {
     if (this !== activeVideo) return;
     const code = activeVideo.error?.code;
-    statusEl.textContent = `视频源播放失败${code ? `（MediaError ${code}）` : ''}，请检查 Jellyfin 转码日志。`;
+    statusEl.textContent = `Échec de lecture de la source vidéo${code ? ` (MediaError ${code})` : ''}. Consultez les journaux de transcodage de Jellyfin.`;
   }
 
   async function startCompatAt(position, shouldPlay = true) {
-    if (!compatUrl) throw new Error('当前地址无法生成 Jellyfin H264 兼容源');
+    if (!compatUrl) throw new Error('Impossible de générer une source compatible H264 Jellyfin à partir de cette adresse');
     const serial = ++loadSerial;
     const duration = getDuration();
     const target = Math.max(0, Math.min(Number(position) || 0, duration ? duration - 0.25 : Infinity));
@@ -1222,14 +1233,14 @@
     overlay.appendChild(compatVideo);
     replaceVideoTexture(activeVideo);
     updateToolbar();
-    statusEl.textContent = `正在从 ${formatTime(target)} 启动 H.264/8-bit 转码…`;
+    statusEl.textContent = `Démarrage du transcodage H.264/8 bits à partir de ${formatTime(target)}…`;
     compatVideo.src = url.href;
     compatVideo.load();
     if (shouldPlay) {
       try {
         await compatVideo.play();
       } catch (_) {
-        if (serial === loadSerial) statusEl.textContent = '兼容源已建立；请按 PLAY 开始播放。';
+        if (serial === loadSerial) statusEl.textContent = 'Source compatible prête ; appuyez sur LIRE pour démarrer la lecture.';
       }
     }
   }
@@ -1250,7 +1261,7 @@
     bindMediaEvents(activeVideo, true);
     replaceVideoTexture(activeVideo);
     updateToolbar();
-    statusEl.textContent = '已切回原始源。';
+    statusEl.textContent = 'Retour à la source d’origine.';
     if (shouldPlay) await sourceVideo.play().catch(() => {});
   }
 
@@ -1260,7 +1271,7 @@
     const shouldPlay = !activeVideo?.paused;
     if (sourceMode === 'compat') useOriginalSource();
     else startCompatAt(position, shouldPlay).catch((error) => {
-      statusEl.textContent = `兼容源启动失败：${error?.message || error}`;
+      statusEl.textContent = `Échec du démarrage de la source compatible : ${error?.message || error}`;
     });
   }
 
@@ -1275,7 +1286,7 @@
       activeVideo.currentTime = relative;
     } else {
       startCompatAt(target, !activeVideo.paused).catch((error) => {
-        statusEl.textContent = `兼容源跳转失败：${error?.message || error}`;
+        statusEl.textContent = `Échec du déplacement dans la source compatible : ${error?.message || error}`;
       });
     }
   }
@@ -1318,7 +1329,7 @@
     });
     const sourceButton = overlay.querySelector('#jvr-source-toggle');
     if (sourceButton) {
-      sourceButton.textContent = sourceMode === 'compat' ? 'H264 兼容源 ✓' : '原始源';
+      sourceButton.textContent = sourceMode === 'compat' ? 'Source H264 ✓' : 'Source d’origine';
       sourceButton.classList.toggle('active', sourceMode === 'compat');
       sourceButton.disabled = !compatUrl;
     }
@@ -1326,11 +1337,11 @@
 
   function enterVr() {
     if (closing || xrEntering) return;
-    if (!window.isSecureContext) return alert('WebXR 需要 HTTPS。');
-    if (!navigator.xr) return alert('当前浏览器没有 WebXR。');
-    if (!renderer) return alert('WebXR 渲染器尚未初始化。');
+    if (!window.isSecureContext) return alert('WebXR nécessite HTTPS.');
+    if (!navigator.xr) return alert('Ce navigateur ne prend pas en charge WebXR.');
+    if (!renderer) return alert('Le moteur de rendu WebXR n’est pas encore initialisé.');
     if (xrSession || renderer.xr.isPresenting || renderer.xr.getSession?.()) {
-      if (statusEl) statusEl.textContent = 'VR 会话已存在，请先退出当前 VR。';
+      if (statusEl) statusEl.textContent = 'Une session VR existe déjà : quittez d’abord la VR actuelle.';
       return;
     }
     const targetRenderer = renderer;
@@ -1352,7 +1363,7 @@
           clearTimeout(xrPanelTimer);
           xrPanelTimer = null;
           hidePanel();
-          if (!closing && statusEl) statusEl.textContent = '已退出 VR，可再次进入或返回 Jellyfin。';
+          if (!closing && statusEl) statusEl.textContent = 'VR quittée : vous pouvez y retourner ou revenir à Jellyfin.';
         }, { once: true });
         // closePlayer waits for this task before disposing the renderer.
         if (closing || renderer !== targetRenderer) {
@@ -1362,7 +1373,7 @@
         await targetRenderer.xr.setSession(session);
         if (closing || xrSession !== session) return;
         syncMediaLayer();
-        statusEl.textContent = `已进入 VR · ${mediaLayerNote}。按扳机打开控制面板。`;
+        statusEl.textContent = `En VR · ${mediaLayerNote}. Appuyez sur la gâchette pour ouvrir le panneau de contrôle.`;
         xrPanelTimer = setTimeout(() => {
           xrPanelTimer = null;
           if (!closing && xrSession === session) showPanel();
@@ -1374,7 +1385,7 @@
           try { await session.end(); }
           catch (endError) { console.error('[Jellyfin VR] Session cleanup failed', endError); }
         }
-        if (!closing) alert(`进入 VR 失败：${error?.message || error}`);
+        if (!closing) alert(`Échec de l’entrée en VR : ${error?.message || error}`);
       } finally {
         xrEntering = false;
       }
@@ -1405,7 +1416,7 @@
   async function openPlayer() {
     if (overlay || opening || closing) return;
     sourceVideo = findVideo();
-    if (!sourceVideo) return alert('请先在 Jellyfin 中开始播放视频。');
+    if (!sourceVideo) return alert('Lancez d’abord la lecture d’une vidéo dans Jellyfin.');
     opening = true;
     savedVideoId = sourceVideo.id;
     try {
@@ -1426,12 +1437,12 @@
       buildRenderer();
       bindMediaEvents(sourceVideo, true);
       updateToolbar();
-      statusEl.textContent = `${VERSION} · 正在连接原始源…`;
+      statusEl.textContent = `${VERSION} · Connexion à la source d’origine…`;
       handleMediaReady.call(sourceVideo);
       sourceVideo.play().catch(() => {});
     } catch (error) {
       closePlayer();
-      alert(`VR 播放器初始化失败：${error?.message || error}`);
+      alert(`Échec de l’initialisation du lecteur VR : ${error?.message || error}`);
     } finally {
       opening = false;
     }
@@ -1564,7 +1575,7 @@
   }
 
   function locateControls() {
-    const fullscreen = Array.from(document.querySelectorAll('.btnFullscreen,[aria-label="Fullscreen"],[aria-label="全屏"],[title="Fullscreen"],[title="全屏"],.button-fullscreen')).find(isVisibleControl);
+    const fullscreen = Array.from(document.querySelectorAll('.btnFullscreen,[aria-label="Fullscreen"],[aria-label="全屏"],[aria-label="Plein écran"],[title="Fullscreen"],[title="全屏"],[title="Plein écran"],.button-fullscreen')).find(isVisibleControl);
     if (fullscreen?.parentElement) return { parent: fullscreen.parentElement, before: fullscreen };
     const bar = Array.from(document.querySelectorAll('.videoOsdBottom .buttons,.videoOsdBottom,.osdControls,.videoControls,[class*="videoOsdBottom"]')).find(isVisibleControl);
     return bar ? { parent: bar, before: null } : null;
@@ -1608,12 +1619,21 @@
     else button?.remove();
   }
 
+  // scan() queries the DOM and calls getComputedStyle(). Jellyfin Web mutates
+  // the DOM constantly (progress bar, OSD), so coalesce bursts into one scan.
+  let scanQueued = false;
+  function scheduleScan() {
+    if (scanQueued) return;
+    scanQueued = true;
+    setTimeout(() => { scanQueued = false; scan(); }, 150);
+  }
+
   function init() {
     scan();
-    new MutationObserver(scan).observe(document.documentElement, { childList: true, subtree: true });
+    new MutationObserver(scheduleScan).observe(document.documentElement, { childList: true, subtree: true });
     scanTimer = setInterval(scan, 1000);
-    document.addEventListener('fullscreenchange', scan);
-    ['loadedmetadata', 'emptied', 'play'].forEach((event) => document.addEventListener(event, scan, true));
+    document.addEventListener('fullscreenchange', scheduleScan);
+    ['loadedmetadata', 'emptied', 'play'].forEach((event) => document.addEventListener(event, scheduleScan, true));
     window.addEventListener('beforeunload', () => clearInterval(scanTimer), { once: true });
   }
 
