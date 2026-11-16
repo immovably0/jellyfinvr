@@ -1595,7 +1595,7 @@
   }
 
   function locateControls() {
-    const fullscreen = Array.from(document.querySelectorAll('.btnFullscreen,[aria-label="Fullscreen"],[aria-label="全屏"],[aria-label="Plein écran"],[title="Fullscreen"],[title="全屏"],[title="Plein écran"],.button-fullscreen')).find(isVisibleControl);
+    const fullscreen = Array.from(document.querySelectorAll('.btnFullscreen,[aria-label="Fullscreen"],[aria-label="Plein écran"],[title="Fullscreen"],[title="Plein écran"],.button-fullscreen')).find(isVisibleControl);
     if (fullscreen?.parentElement) return { parent: fullscreen.parentElement, before: fullscreen };
     const bar = Array.from(document.querySelectorAll('.videoOsdBottom .buttons,.videoOsdBottom,.osdControls,.videoControls,[class*="videoOsdBottom"]')).find(isVisibleControl);
     return bar ? { parent: bar, before: null } : null;
