@@ -78,6 +78,8 @@
   let panelBorder = null;
   let panelCursor = null;
   let panelVisible = false;
+  // Diagnostic stats (HUD in VR + label in the toolbar) are hidden by default.
+  let statsVisible = false;
   let panelButtons = [];
   let hoverAction = '';
   let lastPanelDraw = 0;
@@ -238,12 +240,16 @@
     fpsLabel = document.createElement('span');
     fpsLabel.className = 'jvr-label';
     fpsLabel.textContent = 'Rendu -- FPS · Mise à jour vidéo -- FPS';
+    fpsLabel.style.display = statsVisible ? '' : 'none';
     bar.append(fpsLabel);
     [['360°', '360'], ['180° équirect.', '180'], ['180° fisheye', 'fisheye'], ['Cinéma', 'flat']]
         .forEach(([label, value]) => bar.append(createButton(label, 'projection', value)));
     [['Mono', 'mono'], ['SBS', 'sbs'], ['OU', 'ou']]
         .forEach(([label, value]) => bar.append(createButton(label, 'stereo', value)));
     bar.append(createButton('Échanger les yeux', 'swap'));
+    const stats = createButton('Stats', 'stats');
+    stats.id = 'jvr-stats-toggle';
+    bar.append(stats);
     const source = createButton('Source d’origine', 'source');
     source.id = 'jvr-source-toggle';
     bar.append(source);
@@ -404,10 +410,11 @@
     addPanelButton(905, 275, 210, 105, currentMode.projection.toUpperCase(), 'projection');
     addPanelButton(1135, 275, 180, 105, currentMode.stereo.toUpperCase(), 'stereo');
     addPanelButton(1335, 275, 210, 105, sourceMode === 'compat' ? 'H264' : 'SOURCE', 'source', '#25536a');
-    addPanelButton(55, 435, 330, 105, 'ÉCHANGER YEUX', 'swap');
-    addPanelButton(425, 435, 330, 105, 'RÉINITIALISER', 'reset', '#365061');
-    addPanelButton(795, 435, 330, 105, 'MASQUER', 'hide');
-    addPanelButton(1165, 435, 380, 105, 'QUITTER VR', 'exit-vr', '#652d34');
+    addPanelButton(55, 435, 282, 105, 'ÉCHANGER YEUX', 'swap');
+    addPanelButton(357, 435, 282, 105, 'RÉINITIALISER', 'reset', '#365061');
+    addPanelButton(659, 435, 282, 105, statsVisible ? 'MASQUER STATS' : 'STATS', 'stats', '#25536a');
+    addPanelButton(961, 435, 282, 105, 'MASQUER', 'hide');
+    addPanelButton(1263, 435, 282, 105, 'QUITTER VR', 'exit-vr', '#652d34');
     context.fillStyle = '#81909f';
     context.font = '36px system-ui, sans-serif';
     fillFittedText(context, 'Barre de temps : glisser · Gâchette maintenue : déplacer la vue · Grip maintenu : tout réinitialiser', 800, 635, 1500, 36, 24);
@@ -526,12 +533,14 @@
     fpsMesh.name = 'jvr-fps-display';
     fpsMesh.position.set(0, -0.76, -1.45);
     fpsMesh.renderOrder = 10004;
+    fpsMesh.visible = statsVisible;
     camera.add(fpsMesh);
     resetFps();
     drawFps('Rendu -- FPS · Rappels vidéo -- FPS\nStats vidéo : échantillonnage');
   }
 
   function drawFps(text) {
+    if (!statsVisible) return;
     if (fpsLabel) { fpsLabel.textContent = text.replace(/\n/g, ' · '); fpsLabel.style.whiteSpace = 'pre-wrap'; }
     if (!fpsContext || !fpsTexture) return;
     fpsContext.clearRect(0, 0, 1024, 300);
@@ -1165,7 +1174,7 @@
       videoTexture.userData.diagnosticVersion = videoTexture.version;
     }
     if (panelTexture && panelMesh?.visible) renderer.initTexture(panelTexture);
-    if (fpsTexture) renderer.initTexture(fpsTexture);
+    if (fpsTexture && statsVisible) renderer.initTexture(fpsTexture);
     const renderStart = performance.now();
     renderer.render(world, camera);
     recordCost('render', performance.now() - renderStart);
@@ -1303,6 +1312,14 @@
     rebuildVideoMeshes();
   }
 
+  function toggleStats() {
+    statsVisible = !statsVisible;
+    if (fpsMesh) fpsMesh.visible = statsVisible;
+    if (fpsLabel) fpsLabel.style.display = statsVisible ? '' : 'none';
+    updateToolbar();
+    drawPanel();
+  }
+
   function runAction(action) {
     if (!activeVideo) return;
     if (action === 'play') activeVideo.paused ? activeVideo.play().catch(() => {}) : activeVideo.pause();
@@ -1313,6 +1330,7 @@
     else if (action === 'stereo') cycleStereo();
     else if (action === 'swap') { currentMode.swap = !currentMode.swap; rebuildVideoMeshes(); }
     else if (action === 'source') toggleSource();
+    else if (action === 'stats') toggleStats();
     else if (action === 'reset') resetAll();
     else if (action === 'hide') hidePanel();
     else if (action === 'exit-vr') exitVrOnly(true);
@@ -1327,6 +1345,7 @@
     overlay.querySelectorAll('[data-action="stereo"][data-value]').forEach((button) => {
       button.classList.toggle('active', button.dataset.value === currentMode.stereo);
     });
+    overlay.querySelector('#jvr-stats-toggle')?.classList.toggle('active', statsVisible);
     const sourceButton = overlay.querySelector('#jvr-source-toggle');
     if (sourceButton) {
       sourceButton.textContent = sourceMode === 'compat' ? 'Source H264 ✓' : 'Source d’origine';
@@ -1411,6 +1430,7 @@
     else if (action === 'stereo') { currentMode.stereo = value; rebuildVideoMeshes(); }
     else if (action === 'swap') { currentMode.swap = !currentMode.swap; rebuildVideoMeshes(); }
     else if (action === 'source') toggleSource();
+    else if (action === 'stats') toggleStats();
   }
 
   async function openPlayer() {
