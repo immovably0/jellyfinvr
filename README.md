@@ -1,6 +1,6 @@
 # Jellyfin supports plugins for VR
 
-[English](#english) | [中文](#中文)
+[English](#english) | [Français](README.fr.md) | [中文](#中文)
 
 ---
 
