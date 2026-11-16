@@ -7,12 +7,13 @@
   if (window.__JELLYFIN_VR_V42__) return;
   window.__JELLYFIN_VR_V42__ = true;
 
+  const VERSION = 'v4.10-playback-quality';
   const THREE_URL = 'https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.min.js';
   const BUTTON_ID = 'jvr-v4-button';
   const OVERLAY_ID = 'jvr-v4-overlay';
-  const PANEL_WIDTH = 1.82;
-  const PANEL_HEIGHT = 0.82;
-  const PANEL_HOME = { x: 0, y: -0.13, z: -1.32 };
+  const PANEL_WIDTH = 1.12;
+  const PANEL_HEIGHT = 0.504;
+  const PANEL_HOME = { x: 0, y: -0.36, z: -1.45 };
   const TIMELINE = { x: 80, y: 164, width: 1440, height: 76, trackY: 192, trackHeight: 20 };
 
   let overlay = null;
@@ -31,6 +32,42 @@
   let camera = null;
   let renderer = null;
   let videoTexture = null;
+  let mediaLayer = null;
+  let mediaLayerKey = '';
+  let mediaLayerVideo = null;
+  let mediaLayerNote = 'Canvas';
+  let fpsPresentedFrames = 0;
+  let playbackQualityBaseline = null;
+  let textureVideo = null;
+  let videoFrameCanvas = null;
+  let videoFrameContext = null;
+  let videoFrameCallback = null;
+  let videoFrameDirty = false;
+  let videoFrameTime = -1;
+  let videoFrameFailed = false;
+  let fpsMesh = null;
+  let fpsCanvas = null;
+  let fpsContext = null;
+  let fpsTexture = null;
+  let fpsLabel = null;
+  let fpsStart = null;
+  let fpsFrames = 0;
+  let fpsVideoFrames = 0;
+  let perfSamples = {};
+  let decodeTotal = 0;
+  let decodeCount = 0;
+
+  function recordCost(name, milliseconds) {
+    const sample = perfSamples[name] || (perfSamples[name] = { total: 0, count: 0, max: 0 });
+    sample.total += milliseconds;
+    sample.count += 1;
+    sample.max = Math.max(sample.max, milliseconds);
+  }
+
+  function costLabel(name) {
+    const sample = perfSamples[name];
+    return sample?.count ? `${(sample.total / sample.count).toFixed(1)}/${sample.max.toFixed(1)}` : '--';
+  }
   let videoRoot = null;
   let videoMeshes = [];
   let controllers = [];
@@ -46,7 +83,11 @@
   let lastPanelDraw = 0;
   let lastStickAction = 0;
   let xrSession = null;
+  let xrEntering = false;
+  let xrEntryTask = null;
+  let xrPanelTimer = null;
   let closing = false;
+  let opening = false;
 
   let scanTimer = 0;
   let resizeHandler = null;
@@ -90,8 +131,8 @@
   function findVideo() {
     const videos = Array.from(document.querySelectorAll('video')).filter((video) => video.id !== 'jvr-compat-video');
     return videos.find((video) => video.currentSrc && !video.paused)
-      || videos.find((video) => video.currentSrc || video.src)
-      || null;
+        || videos.find((video) => video.currentSrc || video.src)
+        || null;
   }
 
   function formatTime(value) {
@@ -100,8 +141,8 @@
     const minutes = Math.floor((value % 3600) / 60);
     const seconds = Math.floor(value % 60).toString().padStart(2, '0');
     return hours
-      ? `${hours}:${minutes.toString().padStart(2, '0')}:${seconds}`
-      : `${minutes}:${seconds}`;
+        ? `${hours}:${minutes.toString().padStart(2, '0')}:${seconds}`
+        : `${minutes}:${seconds}`;
   }
 
   function setQueryParam(url, name, value) {
@@ -145,8 +186,8 @@
   function getCurrentTime() {
     if (!activeVideo) return 0;
     return sourceMode === 'compat'
-      ? compatOffset + (activeVideo.currentTime || 0)
-      : (activeVideo.currentTime || 0);
+        ? compatOffset + (activeVideo.currentTime || 0)
+        : (activeVideo.currentTime || 0);
   }
 
   function getDuration() {
@@ -192,12 +233,16 @@
     bar.append(close);
     const version = document.createElement('span');
     version.className = 'jvr-label';
-    version.textContent = 'Jellyfin VR v4.2';
+    version.textContent = `Jellyfin VR ${VERSION}`;
     bar.append(version);
+    fpsLabel = document.createElement('span');
+    fpsLabel.className = 'jvr-label';
+    fpsLabel.textContent = '渲染 -- FPS · 视频更新 -- FPS';
+    bar.append(fpsLabel);
     [['360°', '360'], ['180° 经编', '180'], ['180° 鱼眼', 'fisheye'], ['影院', 'flat']]
-      .forEach(([label, value]) => bar.append(createButton(label, 'projection', value)));
+        .forEach(([label, value]) => bar.append(createButton(label, 'projection', value)));
     [['单眼', 'mono'], ['SBS', 'sbs'], ['OU', 'ou']]
-      .forEach(([label, value]) => bar.append(createButton(label, 'stereo', value)));
+        .forEach(([label, value]) => bar.append(createButton(label, 'stereo', value)));
     bar.append(createButton('交换眼睛', 'swap'));
     const source = createButton('原始源', 'source');
     source.id = 'jvr-source-toggle';
@@ -251,8 +296,8 @@
     panelCursor.renderOrder = 10003;
     panelCursor.visible = false;
     const cursorDot = new THREE.Mesh(
-      new THREE.CircleGeometry(0.008, 24),
-      new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, depthTest: false, depthWrite: false })
+        new THREE.CircleGeometry(0.008, 24),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, side: THREE.DoubleSide, depthTest: false, depthWrite: false })
     );
     cursorDot.position.z = 0.001;
     panelCursor.add(cursorDot);
@@ -283,7 +328,7 @@
     const context = panelContext;
     const hovered = hoverAction === action;
     roundedRect(context, x, y, width, height, 18);
-    context.fillStyle = hovered ? '#008fc2' : color;
+    context.fillStyle = hovered ? '#008fc2d9' : `${color}a6`;
     context.fill();
     context.strokeStyle = hovered ? '#83ddff' : '#ffffff30';
     context.lineWidth = hovered ? 5 : 2;
@@ -317,12 +362,12 @@
     panelButtons = [];
     context.clearRect(0, 0, panelCanvas.width, panelCanvas.height);
     roundedRect(context, 0, 0, 1600, 720, 30);
-    context.fillStyle = '#10151bf7';
+    context.fillStyle = '#10151b73';
     context.fill();
     context.strokeStyle = '#36d2ffff';
     context.lineWidth = 12;
     context.stroke();
-    context.fillStyle = '#123848';
+    context.fillStyle = '#12384880';
     context.fillRect(28, 18, 1544, 16);
     context.fillStyle = '#5edcff';
     context.font = '28px system-ui, sans-serif';
@@ -381,24 +426,146 @@
     videoRoot.name = 'jvr-video-view-root';
     videoRoot.position.set(0, 1.6, 0);
     world.add(videoRoot);
-    renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: 'high-performance' });
+    // r160 does not forward an xrCompatible renderer option to getContext().
+    // Supply the context explicitly and avoid the XR MSAA resolve path, which
+    // can produce flashing blocks on affected Meta browser/GPU combinations.
+    const canvas = document.createElement('canvas');
+    const contextOptions = {
+      xrCompatible: true,
+      antialias: false,
+      alpha: true,
+      depth: true,
+      stencil: false,
+      powerPreference: 'high-performance'
+    };
+    const context = canvas.getContext('webgl2', contextOptions)
+        || canvas.getContext('webgl', contextOptions);
+    if (!context) throw new Error('无法创建 WebXR 兼容的 WebGL 上下文。');
+    renderer = new THREE.WebGLRenderer({ canvas, context, ...contextOptions });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
     renderer.setSize(innerWidth, innerHeight);
     renderer.xr.enabled = true;
     renderer.xr.setReferenceSpaceType('local-floor');
+    // Diagnostic compatibility setting: avoid reduced-resolution peripheral
+    // rendering while investigating the blocks at the top of the headset view.
+    // Set before setSession(), so it applies when Three.js creates the XR layer.
+    renderer.xr.setFoveation(0);
     renderer.domElement.className = 'jvr-canvas';
     overlay.prepend(renderer.domElement);
+    createFpsDisplay();
+    renderer.xr.addEventListener('sessionstart', resetFps);
+    renderer.xr.addEventListener('sessionend', resetFps);
     createPanel();
     setupControllers();
     resizeHandler = () => {
       if (!renderer || !camera) return;
+      // XR owns the framebuffer dimensions until the session has ended.
+      if (xrSession || renderer.xr.isPresenting) return;
       camera.aspect = innerWidth / innerHeight;
       camera.updateProjectionMatrix();
       renderer.setSize(innerWidth, innerHeight);
     };
+    renderer.xr.addEventListener('sessionend', resizeHandler);
     window.addEventListener('resize', resizeHandler);
     renderer.setAnimationLoop(renderFrame);
+  }
+
+  function resetFps() {
+    fpsStart = null;
+    playbackQualityBaseline = null;
+    fpsFrames = 0;
+    fpsVideoFrames = 0;
+    perfSamples = {};
+    decodeTotal = decodeCount = 0;
+    fpsPresentedFrames = 0;
+  }
+
+  // totalVideoFrames includes dropped frames. Subtract interval drops to
+  // estimate effective video FPS; this is not a headset/compositor counter.
+  function samplePlaybackQuality(time) {
+    const video = textureVideo;
+    let quality;
+    try { quality = video?.getVideoPlaybackQuality?.(); }
+    catch (_) { quality = null; }
+    if (!quality || !Number.isFinite(quality.totalVideoFrames)
+        || !Number.isFinite(quality.droppedVideoFrames)) {
+      playbackQualityBaseline = null;
+      return '视频统计 -- · 浏览器未提供帧计数';
+    }
+    const total = quality.totalVideoFrames;
+    const dropped = quality.droppedVideoFrames;
+    const previous = playbackQualityBaseline;
+    playbackQualityBaseline = { video, time, total, dropped };
+    if (!previous || previous.video !== video || time <= previous.time
+        || total < previous.total || dropped < previous.dropped) {
+      return `视频统计采样中 · 累计丢帧 ${dropped}`;
+    }
+    const frameDelta = total - previous.total;
+    const dropDelta = dropped - previous.dropped;
+    if (dropDelta > frameDelta) return `视频统计重新采样 · 累计丢帧 ${dropped}`;
+    const elapsed = time - previous.time;
+    const effectiveFps = (frameDelta - dropDelta) * 1000 / elapsed;
+    const dropRate = frameDelta ? dropDelta * 100 / frameDelta : 0;
+    return `视频有效 ${effectiveFps.toFixed(1)} FPS · 本段丢 ${dropDelta}/${frameDelta} (${dropRate.toFixed(1)}%) · 累计丢 ${dropped}`;
+  }
+
+  function createFpsDisplay() {
+    fpsCanvas = document.createElement('canvas');
+    fpsCanvas.width = 1024;
+    fpsCanvas.height = 300;
+    fpsContext = fpsCanvas.getContext('2d');
+    fpsTexture = new THREE.CanvasTexture(fpsCanvas);
+    fpsTexture.colorSpace = THREE.SRGBColorSpace;
+    fpsTexture.generateMipmaps = false;
+    fpsTexture.minFilter = THREE.LinearFilter;
+    fpsMesh = new THREE.Mesh(
+        new THREE.PlaneGeometry(1.35, 0.3955),
+        new THREE.MeshBasicMaterial({ map: fpsTexture, transparent: true, depthTest: false, depthWrite: false, toneMapped: false })
+    );
+    fpsMesh.name = 'jvr-fps-display';
+    fpsMesh.position.set(0, -0.76, -1.45);
+    fpsMesh.renderOrder = 10004;
+    camera.add(fpsMesh);
+    resetFps();
+    drawFps('渲染 -- FPS · 视频回调 -- FPS\n视频统计采样中');
+  }
+
+  function drawFps(text) {
+    if (fpsLabel) { fpsLabel.textContent = text.replace(/\n/g, ' · '); fpsLabel.style.whiteSpace = 'pre-wrap'; }
+    if (!fpsContext || !fpsTexture) return;
+    fpsContext.clearRect(0, 0, 1024, 300);
+    fpsContext.fillStyle = '#10151bd9';
+    fpsContext.fillRect(0, 0, 1024, 300);
+    fpsContext.fillStyle = '#91f2c2';
+    fpsContext.font = '30px system-ui, sans-serif';
+    fpsContext.textAlign = 'center';
+    fpsContext.textBaseline = 'middle';
+    text.split('\n').forEach((line, index) => fpsContext.fillText(line, 512, 30 + index * 58, 1000));
+    fpsTexture.needsUpdate = true;
+  }
+
+  function updateFps(time) {
+    if (!Number.isFinite(time)) return;
+    if (fpsStart === null || time < fpsStart || time - fpsStart > 5000) {
+      resetFps();
+      fpsStart = time;
+      samplePlaybackQuality(time);
+      return;
+    }
+    fpsFrames += 1;
+    const elapsed = time - fpsStart;
+    if (elapsed < 1000) return;
+    const playbackQualityText = samplePlaybackQuality(time);
+    // Count submitted render frames and actual canvas video-frame copies.
+    // This is not the compositor's display rate or the file's nominal FPS.
+    drawFps(`渲染 ${(fpsFrames * 1000 / elapsed).toFixed(1)} FPS · 视频回调 ${(fpsPresentedFrames * 1000 / elapsed).toFixed(1)} FPS${mediaLayer ? '' : ` · 复制 ${(fpsVideoFrames * 1000 / elapsed).toFixed(1)} FPS`}\n${playbackQualityText}\n复制 ${costLabel('copy')} · 上传 ${costLabel('upload')} ms 均/峰\n渲染提交 ${costLabel('render')} ms 均/峰 · 解码延迟 ${decodeCount ? (decodeTotal / decodeCount).toFixed(1) : '--'} ms\n${mediaLayerNote} · 源 ${textureVideo?.videoWidth || '?'}×${textureVideo?.videoHeight || '?'}${mediaLayer ? '' : ` → 纹理 ${videoFrameCanvas?.width || '?'}×${videoFrameCanvas?.height || '?'}`}`);
+    fpsStart = time;
+    fpsFrames = 0;
+    fpsVideoFrames = 0;
+    perfSamples = {};
+    decodeTotal = decodeCount = 0;
+    fpsPresentedFrames = 0;
   }
 
   function makeGeometry(projection, eye) {
@@ -432,17 +599,23 @@
       return new THREE.MeshBasicMaterial({
         map: videoTexture,
         side: currentMode.projection === 'flat' ? THREE.DoubleSide : THREE.FrontSide,
+        // The video is a background, not occluding scene geometry. Do not
+        // submit its large sphere/plane triangles to the depth buffer.
+        depthTest: false,
+        depthWrite: false,
         toneMapped: false
       });
     }
     const selectedEye = currentMode.swap ? 1 - eye : eye;
     const stereoLine = currentMode.stereo === 'sbs'
-      ? `p.x=p.x*0.5+${selectedEye ? '0.5' : '0.0'};`
-      : currentMode.stereo === 'ou'
-        ? `p.y=p.y*0.5+${selectedEye ? '0.0' : '0.5'};`
-        : '';
+        ? `p.x=p.x*0.5+${selectedEye ? '0.5' : '0.0'};`
+        : currentMode.stereo === 'ou'
+            ? `p.y=p.y*0.5+${selectedEye ? '0.0' : '0.5'};`
+            : '';
     return new THREE.ShaderMaterial({
       side: THREE.FrontSide,
+      depthTest: false,
+      depthWrite: false,
       uniforms: { map: { value: videoTexture } },
       vertexShader: `varying vec3 vLocal;void main(){vLocal=normalize(position);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.0);}`,
       fragmentShader: `uniform sampler2D map;varying vec3 vLocal;void main(){vec2 p=vLocal.xy*0.5+0.5;${stereoLine}gl_FragColor=texture2D(map,p);}`
@@ -464,14 +637,16 @@
     const stereo = currentMode.stereo !== 'mono';
     const left = new THREE.Mesh(makeGeometry(currentMode.projection, 0), makeMaterial(0));
     left.name = 'jvr-left-video';
+    left.renderOrder = -1000;
     if (currentMode.projection === 'flat') left.position.set(0, 0, -4.5);
     else if (currentMode.projection !== '360') left.rotation.y = Math.PI / 2;
     left.layers.set(stereo ? 1 : 0);
-      videoRoot.add(left);
+    videoRoot.add(left);
     videoMeshes.push(left);
     if (stereo) {
       const right = new THREE.Mesh(makeGeometry(currentMode.projection, 1), makeMaterial(1));
       right.name = 'jvr-right-video';
+      right.renderOrder = -1000;
       if (currentMode.projection === 'flat') right.position.set(0, 0, -4.5);
       else if (currentMode.projection !== '360') right.rotation.y = Math.PI / 2;
       right.layers.set(2);
@@ -482,15 +657,211 @@
     drawPanel();
   }
 
+  async function prepareOriginalCors(video) {
+    const raw = video.currentSrc || video.src;
+    if (!raw) return;
+    const url = new URL(raw, location.href);
+    if (!/^https?:$/.test(url.protocol) || video.crossOrigin) return;
+    let needsCors = url.origin !== location.origin;
+    if (video.readyState >= 2) {
+      const canvas = document.createElement('canvas');
+      canvas.width = canvas.height = 1;
+      const context = canvas.getContext('2d');
+      try {
+        context.drawImage(video, 0, 0, 1, 1);
+        context.getImageData(0, 0, 1, 1);
+      } catch (error) {
+        if (error.name !== 'SecurityError') throw error;
+        needsCors = true;
+      }
+    }
+    if (!needsCors) return;
+    const position = video.currentTime;
+    const rate = video.playbackRate;
+    video.pause();
+    await new Promise((resolve, reject) => {
+      const cleanup = () => {
+        clearTimeout(timer);
+        video.removeEventListener('loadedmetadata', ready);
+        video.removeEventListener('error', failed);
+      };
+      const ready = () => {
+        cleanup();
+        if (!video.isConnected) return reject(new Error('原视频已离开页面'));
+        try {
+          video.currentTime = Number.isFinite(video.duration)
+              ? Math.min(position, Math.max(0, video.duration - 0.01)) : position;
+          video.playbackRate = rate;
+          resolve();
+        } catch (error) { reject(error); }
+      };
+      const failed = () => {
+        cleanup();
+        reject(new Error('原视频 CORS 加载失败，请检查 8765 服务的视频响应是否包含跨域授权头'));
+      };
+      const timer = setTimeout(failed, 20000);
+      video.addEventListener('loadedmetadata', ready);
+      video.addEventListener('error', failed);
+      // Keep the same element and exact URL. No new codec, bitrate or stream parameters.
+      video.crossOrigin = 'anonymous';
+      video.src = raw;
+      video.load();
+    });
+  }
+
   function replaceVideoTexture(video) {
-    if (!video || !world) return;
+    if (!video || !world || video.readyState < 2) return false;
+    if (textureVideo === video && videoTexture) return true;
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 1;
+    const context = canvas.getContext('2d');
+    try {
+      context.drawImage(video, 0, 0, 1, 1);
+      context.getImageData(0, 0, 1, 1);
+    } catch (error) {
+      statusEl.textContent = error.name === 'SecurityError'
+          ? '原视频画面读取仍被 CORS 拒绝，请检查视频服务器响应头。'
+          : `原视频画面尚不可用：${error.message || error}`;
+      return false;
+    }
+    if (mediaLayer) clearMediaLayer();
+    stopVideoFrameUpdates();
     videoTexture?.dispose?.();
-    videoTexture = new THREE.VideoTexture(video);
+    // Snapshot decoded frames into a canvas instead of directly importing the
+    // decoder's video surface into WebGL during an XR eye draw.
+    textureVideo = video;
+    videoFrameCanvas = canvas;
+    videoFrameContext = context;
+    videoFrameDirty = true;
+    videoFrameTime = -1;
+    videoFrameFailed = false;
+    resetFps();
+    videoTexture = new THREE.CanvasTexture(canvas);
     videoTexture.minFilter = THREE.LinearFilter;
     videoTexture.magFilter = THREE.LinearFilter;
     videoTexture.generateMipmaps = false;
     videoTexture.colorSpace = THREE.SRGBColorSpace;
+    if (typeof video.requestVideoFrameCallback === 'function') {
+      const onFrame = (now, metadata) => {
+        if (textureVideo !== video || closing) return;
+        videoFrameDirty = true;
+        fpsPresentedFrames += 1;
+        if (Number.isFinite(metadata?.processingDuration)) {
+          decodeTotal += metadata.processingDuration * 1000;
+          decodeCount += 1;
+        }
+        videoFrameCallback = video.requestVideoFrameCallback(onFrame);
+      };
+      videoFrameCallback = video.requestVideoFrameCallback(onFrame);
+    }
+    updateVideoFrame();
     rebuildVideoMeshes();
+    return true;
+  }
+
+  function stopVideoFrameUpdates() {
+    if (videoFrameCallback !== null) textureVideo?.cancelVideoFrameCallback?.(videoFrameCallback);
+    videoFrameCallback = null;
+    textureVideo = null;
+  }
+
+  function updateVideoFrame() {
+    const video = textureVideo;
+    if (mediaLayer) return;
+    if (!video || !videoTexture || videoFrameFailed || video.readyState < 2 || video.seeking) return;
+    if (typeof video.requestVideoFrameCallback !== 'function' && video.currentTime !== videoFrameTime) {
+      videoFrameDirty = true;
+    }
+    if (!videoFrameDirty || !video.videoWidth || !video.videoHeight) return;
+    try {
+      const maxSize = renderer.capabilities.maxTextureSize;
+      const scale = Math.min(1, maxSize / video.videoWidth, maxSize / video.videoHeight);
+      const width = Math.max(1, Math.floor(video.videoWidth * scale));
+      const height = Math.max(1, Math.floor(video.videoHeight * scale));
+      if (videoFrameCanvas.width !== width || videoFrameCanvas.height !== height) {
+        videoFrameCanvas.width = width;
+        videoFrameCanvas.height = height;
+        // Three.js requires reallocation when a texture's dimensions change.
+        videoTexture.dispose();
+      }
+      const copyStart = performance.now();
+      videoFrameContext.drawImage(video, 0, 0, width, height);
+      recordCost('copy', performance.now() - copyStart);
+      fpsVideoFrames += 1;
+      videoTexture.needsUpdate = true;
+      videoFrameTime = video.currentTime;
+      videoFrameDirty = false;
+    } catch (error) {
+      videoFrameFailed = true;
+      if (statusEl) statusEl.textContent = `视频帧复制失败：${error.message || error}`;
+      console.error('[Jellyfin VR] Canvas video frame failed', error);
+    }
+  }
+
+  function clearMediaLayer(restore = true) {
+    if (mediaLayer && restore && xrSession && renderer) {
+      xrSession.updateRenderState({ layers: [renderer.xr.getBaseLayer()] });
+    }
+    mediaLayer?.destroy?.();
+    mediaLayer = null;
+    mediaLayerKey = '';
+    mediaLayerVideo = null;
+    mediaLayerNote = 'Canvas';
+    if (videoRoot) videoRoot.visible = true;
+    if (world) world.background = new THREE.Color(0x000000);
+  }
+
+  function syncMediaLayer() {
+    if (!xrSession || !renderer?.xr.isPresenting || !textureVideo) return;
+    const key = `${currentMode.projection}/${currentMode.stereo}/${currentMode.swap}`;
+    if (mediaLayerKey !== key || mediaLayerVideo !== textureVideo) {
+      clearMediaLayer();
+      // Cache failed attempts too; do not retry an unsupported API every frame.
+      mediaLayerKey = key;
+      mediaLayerVideo = textureVideo;
+      if (!['180', '360'].includes(currentMode.projection)) {
+        mediaLayerNote = 'Canvas（当前投影）';
+      } else if (typeof window.XRMediaBinding !== 'function' || !renderer.xr.getBinding?.()) {
+        mediaLayerNote = 'Canvas（Media Layers 不可用）';
+      } else {
+        let candidate = null;
+        try {
+          const binding = new window.XRMediaBinding(xrSession);
+          candidate = binding.createEquirectLayer(textureVideo, {
+            space: renderer.xr.getReferenceSpace(),
+            layout: currentMode.stereo === 'sbs' ? 'stereo-left-right'
+                : currentMode.stereo === 'ou' ? 'stereo-top-bottom' : 'mono',
+            invertStereo: currentMode.swap,
+            centralHorizontalAngle: currentMode.projection === '180' ? Math.PI : 2 * Math.PI,
+            upperVerticalAngle: Math.PI / 2,
+            lowerVerticalAngle: -Math.PI / 2,
+            radius: 0
+          });
+          // Video behind a transparent Three.js projection layer for controls.
+          const controlsLayer = renderer.xr.getBaseLayer();
+          controlsLayer.blendTextureSourceAlpha = true;
+          xrSession.updateRenderState({ layers: [candidate, controlsLayer] });
+          mediaLayer = candidate;
+          videoRoot.visible = false;
+          world.background = null;
+          renderer.setClearColor(0x000000, 0);
+          mediaLayerNote = 'Media Layers ✓';
+          resetFps();
+        } catch (error) {
+          candidate?.destroy?.();
+          mediaLayerNote = 'Canvas（Media Layers 创建失败）';
+          console.warn('[Jellyfin VR] Media Layers fallback', error);
+        }
+      }
+      if (statusEl) statusEl.textContent = `VR 显示路径：${mediaLayerNote}`;
+    }
+    if (mediaLayer) {
+      const q = videoRoot.quaternion;
+      mediaLayer.transform = new XRRigidTransform(
+          { x: videoRoot.position.x, y: videoRoot.position.y, z: videoRoot.position.z },
+          { x: q.x, y: q.y, z: q.z, w: q.w }
+      );
+    }
   }
 
   function configureEyeLayers() {
@@ -508,8 +879,8 @@
     for (let index = 0; index < 2; index += 1) {
       const controller = renderer.xr.getController(index);
       const beam = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.0028, 0.0028, 5, 8, 1, true),
-        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1, depthTest: false, depthWrite: false })
+          new THREE.CylinderGeometry(0.0028, 0.0028, 5, 8, 1, true),
+          new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 1, depthTest: false, depthWrite: false })
       );
       beam.name = 'jvr-ray';
       beam.rotation.x = -Math.PI / 2;
@@ -557,10 +928,10 @@
   function isTimelineArea(intersection) {
     const point = panelPoint(intersection);
     return Boolean(point
-      && point.x >= TIMELINE.x - 35
-      && point.x <= TIMELINE.x + TIMELINE.width + 35
-      && point.y >= TIMELINE.y - 28
-      && point.y <= TIMELINE.y + TIMELINE.height);
+        && point.x >= TIMELINE.x - 35
+        && point.x <= TIMELINE.x + TIMELINE.width + 35
+        && point.y >= TIMELINE.y - 28
+        && point.y <= TIMELINE.y + TIMELINE.height);
   }
 
   function timelineTimeFromIntersection(intersection) {
@@ -583,7 +954,7 @@
     if (!point) return false;
     const edge = 62;
     return point.x < edge || point.x > panelCanvas.width - edge
-      || point.y < 105 || point.y > panelCanvas.height - edge;
+        || point.y < 105 || point.y > panelCanvas.height - edge;
   }
 
   function controllerDirection(controller) {
@@ -599,10 +970,10 @@
     const action = panelActionFromIntersection(intersection);
     dragState.controller = controller;
     dragState.type = panelVisible && intersection && isTimelineArea(intersection)
-      ? 'seek'
-      : panelVisible && intersection && isPanelDragArea(intersection) && !action
-        ? 'panel'
-        : panelVisible ? 'panel-click' : 'view';
+        ? 'seek'
+        : panelVisible && intersection && isPanelDragArea(intersection) && !action
+            ? 'panel'
+            : panelVisible ? 'panel-click' : 'view';
     dragState.startTime = performance.now();
     dragState.startDirection = controllerDirection(controller);
     dragState.startYaw = videoRoot?.rotation.y || 0;
@@ -775,7 +1146,23 @@
       lastPanelDraw = time;
       drawPanel();
     }
+    syncMediaLayer();
+    updateVideoFrame();
+    updateFps(time);
+    // Upload ordinary canvas textures before any scene draw. Both eyes then
+    // sample the same completed snapshot; no video upload is interleaved.
+    if (videoTexture && !mediaLayer) {
+      const needsUpload = videoTexture.version !== videoTexture.userData.diagnosticVersion;
+      const uploadStart = performance.now();
+      renderer.initTexture(videoTexture);
+      if (needsUpload) recordCost('upload', performance.now() - uploadStart);
+      videoTexture.userData.diagnosticVersion = videoTexture.version;
+    }
+    if (panelTexture && panelMesh?.visible) renderer.initTexture(panelTexture);
+    if (fpsTexture) renderer.initTexture(fpsTexture);
+    const renderStart = performance.now();
     renderer.render(world, camera);
+    recordCost('render', performance.now() - renderStart);
   }
 
   function bindMediaEvents(video, enabled) {
@@ -791,7 +1178,7 @@
 
   function handleMediaReady() {
     if (this !== activeVideo) return;
-    replaceVideoTexture(activeVideo);
+    if (!replaceVideoTexture(activeVideo)) return;
     const label = sourceMode === 'compat' ? 'H.264/8-bit 兼容源' : '原始源';
     statusEl.textContent = `${label}已连接 · ${activeVideo.videoWidth || '?'}×${activeVideo.videoHeight || '?'} · 可进入 VR`;
     drawPanel();
@@ -937,28 +1324,62 @@
     }
   }
 
-  async function enterVr() {
+  function enterVr() {
+    if (closing || xrEntering) return;
     if (!window.isSecureContext) return alert('WebXR 需要 HTTPS。');
     if (!navigator.xr) return alert('当前浏览器没有 WebXR。');
     if (!renderer) return alert('WebXR 渲染器尚未初始化。');
-    try {
-      // requestSession must run directly in the Enter VR click's user-activation task.
-      const sessionPromise = navigator.xr.requestSession('immersive-vr', {
-        optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking']
-      });
-      activeVideo?.play?.().catch(() => {});
-      xrSession = await sessionPromise;
-      xrSession.addEventListener('end', () => {
-        xrSession = null;
-        hidePanel();
-        if (!closing && statusEl) statusEl.textContent = '已退出 VR，可再次进入或返回 Jellyfin。';
-      }, { once: true });
-      await renderer.xr.setSession(xrSession);
-      statusEl.textContent = '已进入原生 WebXR。按扳机打开控制面板。';
-      setTimeout(showPanel, 350);
-    } catch (error) {
-      alert(`进入 VR 失败：${error?.message || error}`);
+    if (xrSession || renderer.xr.isPresenting || renderer.xr.getSession?.()) {
+      if (statusEl) statusEl.textContent = 'VR 会话已存在，请先退出当前 VR。';
+      return;
     }
+    const targetRenderer = renderer;
+    xrEntering = true;
+    xrEntryTask = (async () => {
+      let session = null;
+      try {
+        // requestSession must run directly in the Enter VR click's user-activation task.
+        const sessionPromise = navigator.xr.requestSession('immersive-vr', {
+          optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking', 'layers']
+        });
+        activeVideo?.play?.().catch(() => {});
+        session = await sessionPromise;
+        xrSession = session;
+        session.addEventListener('end', () => {
+          if (xrSession !== session) return;
+          clearMediaLayer(false);
+          xrSession = null;
+          clearTimeout(xrPanelTimer);
+          xrPanelTimer = null;
+          hidePanel();
+          if (!closing && statusEl) statusEl.textContent = '已退出 VR，可再次进入或返回 Jellyfin。';
+        }, { once: true });
+        // closePlayer waits for this task before disposing the renderer.
+        if (closing || renderer !== targetRenderer) {
+          await session.end();
+          return;
+        }
+        await targetRenderer.xr.setSession(session);
+        if (closing || xrSession !== session) return;
+        syncMediaLayer();
+        statusEl.textContent = `已进入 VR · ${mediaLayerNote}。按扳机打开控制面板。`;
+        xrPanelTimer = setTimeout(() => {
+          xrPanelTimer = null;
+          if (!closing && xrSession === session) showPanel();
+        }, 350);
+      } catch (error) {
+        // setSession can fail after requestSession has already acquired the
+        // immersive session. Release it before permitting another attempt.
+        if (session) {
+          try { await session.end(); }
+          catch (endError) { console.error('[Jellyfin VR] Session cleanup failed', endError); }
+        }
+        if (!closing) alert(`进入 VR 失败：${error?.message || error}`);
+      } finally {
+        xrEntering = false;
+      }
+    })();
+    return xrEntryTask;
   }
 
   async function exitVrOnly(closeAfter = false) {
@@ -966,7 +1387,7 @@
       const session = xrSession || renderer?.xr?.getSession?.();
       if (session) await session.end();
     } catch (_) {}
-    if (closeAfter) closePlayer();
+    if (closeAfter) await closePlayer();
   }
 
   function handleToolbar(event) {
@@ -982,9 +1403,11 @@
   }
 
   async function openPlayer() {
-    if (overlay) return;
+    if (overlay || opening || closing) return;
     sourceVideo = findVideo();
     if (!sourceVideo) return alert('请先在 Jellyfin 中开始播放视频。');
+    opening = true;
+    savedVideoId = sourceVideo.id;
     try {
       activeVideo = sourceVideo;
       compatUrl = buildCompatStreamUrl(sourceVideo);
@@ -995,30 +1418,42 @@
         muted: sourceVideo.muted,
         volume: sourceVideo.volume
       };
+      await prepareOriginalCors(sourceVideo);
       await ensureThree();
       buildOverlay();
       savedVideoId = sourceVideo.id;
       if (!sourceVideo.id) sourceVideo.id = 'jvr-source-video';
       buildRenderer();
       bindMediaEvents(sourceVideo, true);
-      replaceVideoTexture(sourceVideo);
       updateToolbar();
-      statusEl.textContent = `原生 WebXR 已就绪 · 原始源 ${sourceVideo.videoWidth || '?'}×${sourceVideo.videoHeight || '?'}`;
+      statusEl.textContent = `${VERSION} · 正在连接原始源…`;
+      handleMediaReady.call(sourceVideo);
       sourceVideo.play().catch(() => {});
     } catch (error) {
       closePlayer();
       alert(`VR 播放器初始化失败：${error?.message || error}`);
+    } finally {
+      opening = false;
     }
   }
 
-  function closePlayer() {
+  async function closePlayer() {
     if (closing) return;
     closing = true;
     const finalTime = getCurrentTime();
     const finalMuted = activeVideo?.muted;
     const finalVolume = activeVideo?.volume;
+    clearTimeout(xrPanelTimer);
+    xrPanelTimer = null;
+    // A pending request or setSession must settle before session teardown and
+    // renderer disposal. Otherwise the late result leaves an orphan session.
+    if (xrEntryTask) await xrEntryTask;
     const session = xrSession || renderer?.xr?.getSession?.();
-    session?.end?.().catch?.(() => {});
+    if (session) {
+      try { await session.end(); }
+      catch (error) { console.error('[Jellyfin VR] Session end failed', error); }
+    }
+    clearMediaLayer(false);
     xrSession = null;
     ++loadSerial;
     bindMediaEvents(activeVideo, false);
@@ -1038,6 +1473,7 @@
       sourceVideo.play().catch(() => {});
     }
     renderer?.setAnimationLoop?.(null);
+    stopVideoFrameUpdates();
     disposeVideoMeshes();
     videoTexture?.dispose?.();
     panelMesh?.geometry?.dispose?.();
@@ -1051,6 +1487,9 @@
     panelCursor?.geometry?.dispose?.();
     panelCursor?.material?.dispose?.();
     panelTexture?.dispose?.();
+    fpsMesh?.geometry?.dispose?.();
+    fpsMesh?.material?.dispose?.();
+    fpsTexture?.dispose?.();
     controllers.forEach((controller) => {
       const gripTimer = gripTimers.get(controller);
       if (gripTimer) clearTimeout(gripTimer);
@@ -1060,6 +1499,9 @@
         child.material?.dispose?.();
       });
     });
+    if (resizeHandler) renderer?.xr?.removeEventListener('sessionend', resizeHandler);
+    renderer?.xr?.removeEventListener('sessionstart', resetFps);
+    renderer?.xr?.removeEventListener('sessionend', resetFps);
     renderer?.dispose?.();
     if (resizeHandler) window.removeEventListener('resize', resizeHandler);
     overlay?.remove();
@@ -1076,6 +1518,17 @@
     camera = null;
     renderer = null;
     videoTexture = null;
+    videoFrameCanvas = null;
+    videoFrameContext = null;
+    videoFrameDirty = false;
+    videoFrameTime = -1;
+    videoFrameFailed = false;
+    fpsMesh = null;
+    fpsCanvas = null;
+    fpsContext = null;
+    fpsTexture = null;
+    fpsLabel = null;
+    resetFps();
     videoMeshes = [];
     videoRoot = null;
     controllers = [];
@@ -1089,6 +1542,7 @@
     panelVisible = false;
     hoverAction = '';
     resizeHandler = null;
+    xrEntryTask = null;
     dragState.controller = null;
     dragState.type = '';
     dragState.startDirection = null;
@@ -1099,30 +1553,52 @@
     closing = false;
   }
 
+  function isVisibleControl(element) {
+    if (!element?.isConnected || element.closest('[hidden], [aria-hidden="true"]')) return false;
+    if (!element.getClientRects().length) return false;
+    for (let current = element; current; current = current.parentElement) {
+      const style = getComputedStyle(current);
+      if (style.display === 'none' || style.visibility === 'hidden' || Number(style.opacity) === 0) return false;
+    }
+    return true;
+  }
+
   function locateControls() {
-    const fullscreen = document.querySelector('.btnFullscreen,[aria-label="Fullscreen"],[aria-label="全屏"],[title="Fullscreen"],[title="全屏"],.button-fullscreen');
+    const fullscreen = Array.from(document.querySelectorAll('.btnFullscreen,[aria-label="Fullscreen"],[aria-label="全屏"],[title="Fullscreen"],[title="全屏"],.button-fullscreen')).find(isVisibleControl);
     if (fullscreen?.parentElement) return { parent: fullscreen.parentElement, before: fullscreen };
-    const bar = document.querySelector('.videoOsdBottom .buttons,.videoOsdBottom,.osdControls,.videoControls,[class*="videoOsdBottom"]');
+    const bar = Array.from(document.querySelectorAll('.videoOsdBottom .buttons,.videoOsdBottom,.osdControls,.videoControls,[class*="videoOsdBottom"]')).find(isVisibleControl);
     return bar ? { parent: bar, before: null } : null;
   }
 
   function addVrButton() {
-    if (document.getElementById(BUTTON_ID) || !findVideo()) return;
+    if (!findVideo()) return;
     const target = locateControls();
-    const button = document.createElement('button');
-    button.id = BUTTON_ID;
-    button.type = 'button';
-    button.textContent = 'VR';
-    button.title = 'Jellyfin VR Player v4.2';
-    button.setAttribute('aria-label', 'VR Player');
-    button.onclick = openPlayer;
-    if (target) {
-      button.className = 'autoSize paper-icon-button-light';
-      button.style.cssText = 'min-width:42px;height:42px;border:0;background:transparent;color:inherit;font-weight:800;font-size:13px;cursor:pointer';
-      target.parent.insertBefore(button, target.before);
-    } else {
-      button.style.cssText = 'position:fixed;right:18px;bottom:90px;z-index:2147483000;width:50px;height:50px;border:1px solid #ffffff55;border-radius:50%;background:#006d91e8;color:#fff;font-weight:800;cursor:pointer';
-      document.body.append(button);
+    let button = document.getElementById(BUTTON_ID);
+    if (!button) {
+      button = document.createElement('button');
+      button.id = BUTTON_ID;
+      button.type = 'button';
+      button.textContent = 'VR';
+      button.title = `Jellyfin VR Player ${VERSION}`;
+      button.setAttribute('aria-label', 'VR Player');
+      button.onclick = openPlayer;
+    }
+    const mode = target ? 'toolbar' : 'floating';
+    if (button.dataset.placement !== mode) {
+      button.dataset.placement = mode;
+      if (target) {
+        button.className = 'autoSize paper-icon-button-light';
+        button.style.cssText = 'min-width:42px;height:42px;border:0;background:transparent;color:inherit;font-weight:800;font-size:13px;cursor:pointer';
+      } else {
+        button.className = '';
+        button.style.cssText = 'position:fixed;right:18px;bottom:90px;z-index:2147483000;width:50px;height:50px;border:1px solid #ffffff55;border-radius:50%;background:#006d91e8;color:#fff;font-weight:800;cursor:pointer';
+      }
+    }
+    const fullscreenRoot = document.fullscreenElement;
+    const parent = target?.parent || (fullscreenRoot && !fullscreenRoot.matches('video,canvas,iframe') ? fullscreenRoot : document.body);
+    // Avoid repeated writes: our own DOM mutations also trigger scan().
+    if (button.parentElement !== parent || (target?.before && button.nextSibling !== target.before)) {
+      parent.insertBefore(button, target?.before || null);
     }
   }
 
@@ -1136,6 +1612,8 @@
     scan();
     new MutationObserver(scan).observe(document.documentElement, { childList: true, subtree: true });
     scanTimer = setInterval(scan, 1000);
+    document.addEventListener('fullscreenchange', scan);
+    ['loadedmetadata', 'emptied', 'play'].forEach((event) => document.addEventListener(event, scan, true));
     window.addEventListener('beforeunload', () => clearInterval(scanTimer), { once: true });
   }
 
