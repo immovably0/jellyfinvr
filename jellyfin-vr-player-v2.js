@@ -10,6 +10,12 @@
   const VERSION = 'v4.10-playback-quality';
   const THREE_URL = 'https://cdn.jsdelivr.net/npm/three@0.160.1/build/three.min.js';
   const BUTTON_ID = 'jvr-v4-button';
+  // Longest side (px) of the canvas snapshot taken of each video frame. Copying
+  // and uploading a full 4K/8K frame every frame is what makes the player crawl.
+  // The preview window never needs more than 1920 px. In VR this only applies
+  // to the canvas fallback: the Media Layers path never copies frames.
+  const PREVIEW_MAX_TEXTURE = 1920;
+  const XR_CANVAS_MAX_TEXTURE = 4096;
   const OVERLAY_ID = 'jvr-v4-overlay';
   const PANEL_WIDTH = 1.12;
   const PANEL_HEIGHT = 0.504;
@@ -40,6 +46,7 @@
   let playbackQualityBaseline = null;
   let textureVideo = null;
   let videoFrameCanvas = null;
+  let videoFrameLimit = 0;
   let videoFrameContext = null;
   let videoFrameCallback = null;
   let videoFrameDirty = false;
@@ -450,7 +457,9 @@
     if (!context) throw new Error('Impossible de créer un contexte WebGL compatible WebXR.');
     renderer = new THREE.WebGLRenderer({ canvas, context, ...contextOptions });
     renderer.outputColorSpace = THREE.SRGBColorSpace;
-    renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+    // 1:1 is enough for the 2D preview (XR sizes its own framebuffer) and
+    // avoids rendering up to 4x the pixels on high-density screens.
+    renderer.setPixelRatio(1);
     renderer.setSize(innerWidth, innerHeight);
     renderer.xr.enabled = true;
     renderer.xr.setReferenceSpaceType('local-floor');
@@ -778,12 +787,18 @@
     const video = textureVideo;
     if (mediaLayer) return;
     if (!video || !videoTexture || videoFrameFailed || video.readyState < 2 || video.seeking) return;
+    // Preview and VR use different size caps: redraw when switching, even paused.
+    const sizeLimit = renderer.xr.isPresenting ? XR_CANVAS_MAX_TEXTURE : PREVIEW_MAX_TEXTURE;
+    if (sizeLimit !== videoFrameLimit) {
+      videoFrameLimit = sizeLimit;
+      videoFrameDirty = true;
+    }
     if (typeof video.requestVideoFrameCallback !== 'function' && video.currentTime !== videoFrameTime) {
       videoFrameDirty = true;
     }
     if (!videoFrameDirty || !video.videoWidth || !video.videoHeight) return;
     try {
-      const maxSize = renderer.capabilities.maxTextureSize;
+      const maxSize = Math.min(renderer.capabilities.maxTextureSize, videoFrameLimit);
       const scale = Math.min(1, maxSize / video.videoWidth, maxSize / video.videoHeight);
       const width = Math.max(1, Math.floor(video.videoWidth * scale));
       const height = Math.max(1, Math.floor(video.videoHeight * scale));
@@ -1367,13 +1382,20 @@
     xrEntering = true;
     xrEntryTask = (async () => {
       let session = null;
+      let watchdog = null;
       try {
         // requestSession must run directly in the Enter VR click's user-activation task.
         const sessionPromise = navigator.xr.requestSession('immersive-vr', {
           optionalFeatures: ['local-floor', 'bounded-floor', 'hand-tracking', 'layers']
         });
         activeVideo?.play?.().catch(() => {});
+        // Immediate feedback, and a visible message if the headset never answers.
+        if (statusEl) statusEl.textContent = 'Demande de session VR au casque…';
+        watchdog = setTimeout(() => {
+          if (statusEl && !xrSession) statusEl.textContent = 'Le casque ne répond pas à la demande de session VR (10 s). Rechargez la page Jellyfin et réessayez.';
+        }, 10000);
         session = await sessionPromise;
+        clearTimeout(watchdog);
         xrSession = session;
         session.addEventListener('end', () => {
           if (xrSession !== session) return;
@@ -1404,8 +1426,11 @@
           try { await session.end(); }
           catch (endError) { console.error('[Jellyfin VR] Session cleanup failed', endError); }
         }
+        console.error('[Jellyfin VR] Enter VR failed', error);
+        if (!closing && statusEl) statusEl.textContent = `Échec de l’entrée en VR : ${error?.message || error}`;
         if (!closing) alert(`Échec de l’entrée en VR : ${error?.message || error}`);
       } finally {
+        clearTimeout(watchdog);
         xrEntering = false;
       }
     })();
